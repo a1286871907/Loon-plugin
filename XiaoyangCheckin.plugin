@@ -1,0 +1,58 @@
+#!name = 小羊签到
+#!desc = 低耗电定时访问签到接口；支持 3 个独立任务、GET/POST/PUT/PATCH/DELETE、Header、Body、成功关键字与手动测试。
+#!author = 小羊
+#!system = iOS,iPadOS
+#!system_version = 15.0
+#!loon_version = 3.5.1(986)
+#!tag = 签到,自动化,工具
+#!type = normal
+
+[Argument]
+notify_mode = select,"仅失败","全部结果","关闭",tag=通知方式,desc=建议仅失败，减少打扰
+allow_http = switch,false,tag=允许非 HTTPS,desc=默认禁止明文 HTTP，只有可信内网接口才建议打开
+timeout_seconds = input,"15",tag=请求超时（秒）,desc=建议 5–30 秒
+
+t1_enabled = switch,true,tag=任务 1 · 启用
+t1_name = input,"签到任务 1",tag=任务 1 · 名称
+t1_cron = input,"0 8 * * *",tag=任务 1 · 时间,desc=Cron：分 时 日 月 周；例如每天 08:00 为 0 8 * * *
+t1_method = select,"GET","POST","PUT","PATCH","DELETE",tag=任务 1 · 请求方式
+t1_url = input,"https://example.com/checkin",tag=任务 1 · 签到链接
+t1_headers = input,"{}",tag=任务 1 · Headers（JSON）,desc=例如 {"Cookie":"key=value"}；凭据仅保存在 Loon 本地
+t1_body_type = select,"无","JSON","表单","原始文本",tag=任务 1 · Body 类型
+t1_body = input,"",tag=任务 1 · Body,desc=JSON 填 JSON；表单填 a=1&b=2；GET 通常留空
+t1_success = input,"",tag=任务 1 · 成功关键字,desc=留空时 HTTP 2xx 即成功；填写后响应需包含该文字
+t1_already = input,"",tag=任务 1 · 已签到关键字,desc=响应包含该文字也视为成功
+t1_failure = input,"",tag=任务 1 · 失败关键字,desc=响应包含该文字时强制判定失败
+
+t2_enabled = switch,false,tag=任务 2 · 启用
+t2_name = input,"签到任务 2",tag=任务 2 · 名称
+t2_cron = input,"5 8 * * *",tag=任务 2 · 时间
+t2_method = select,"GET","POST","PUT","PATCH","DELETE",tag=任务 2 · 请求方式
+t2_url = input,"",tag=任务 2 · 签到链接
+t2_headers = input,"{}",tag=任务 2 · Headers（JSON）
+t2_body_type = select,"无","JSON","表单","原始文本",tag=任务 2 · Body 类型
+t2_body = input,"",tag=任务 2 · Body
+t2_success = input,"",tag=任务 2 · 成功关键字
+t2_already = input,"",tag=任务 2 · 已签到关键字
+t2_failure = input,"",tag=任务 2 · 失败关键字
+
+t3_enabled = switch,false,tag=任务 3 · 启用
+t3_name = input,"签到任务 3",tag=任务 3 · 名称
+t3_cron = input,"10 8 * * *",tag=任务 3 · 时间
+t3_method = select,"GET","POST","PUT","PATCH","DELETE",tag=任务 3 · 请求方式
+t3_url = input,"",tag=任务 3 · 签到链接
+t3_headers = input,"{}",tag=任务 3 · Headers（JSON）
+t3_body_type = select,"无","JSON","表单","原始文本",tag=任务 3 · Body 类型
+t3_body = input,"",tag=任务 3 · Body
+t3_success = input,"",tag=任务 3 · 成功关键字
+t3_already = input,"",tag=任务 3 · 已签到关键字
+t3_failure = input,"",tag=任务 3 · 失败关键字
+
+[Script]
+cron ${t1_cron} then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t1_name}, ${t1_method}, ${t1_url}, ${t1_headers}, ${t1_body_type}, ${t1_body}, ${t1_success}, ${t1_already}, ${t1_failure}}) with enable=${t1_enabled}, tag="小羊签到 · 任务 1", timeout=60
+cron ${t2_cron} then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t2_name}, ${t2_method}, ${t2_url}, ${t2_headers}, ${t2_body_type}, ${t2_body}, ${t2_success}, ${t2_already}, ${t2_failure}}) with enable=${t2_enabled}, tag="小羊签到 · 任务 2", timeout=60
+cron ${t3_cron} then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t3_name}, ${t3_method}, ${t3_url}, ${t3_headers}, ${t3_body_type}, ${t3_body}, ${t3_success}, ${t3_already}, ${t3_failure}}) with enable=${t3_enabled}, tag="小羊签到 · 任务 3", timeout=60
+
+generic then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t1_name}, ${t1_method}, ${t1_url}, ${t1_headers}, ${t1_body_type}, ${t1_body}, ${t1_success}, ${t1_already}, ${t1_failure}}) with tag="测试签到任务 1", img_url="checkmark.circle.system", timeout=60
+generic then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t2_name}, ${t2_method}, ${t2_url}, ${t2_headers}, ${t2_body_type}, ${t2_body}, ${t2_success}, ${t2_already}, ${t2_failure}}) with tag="测试签到任务 2", img_url="checkmark.circle.system", timeout=60
+generic then script("XiaoyangCheckin.js", {${notify_mode}, ${allow_http}, ${timeout_seconds}, ${t3_name}, ${t3_method}, ${t3_url}, ${t3_headers}, ${t3_body_type}, ${t3_body}, ${t3_success}, ${t3_already}, ${t3_failure}}) with tag="测试签到任务 3", img_url="checkmark.circle.system", timeout=60
