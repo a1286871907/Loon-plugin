@@ -11,14 +11,19 @@
   var trusted = parseSSIDList(args.trusted_ssids);
   var manual = typeof $environment !== "undefined";
 
+  console.log(
+    "[小羊网络场景] v1.0.1 已加载；可信 Wi-Fi 数量：" + trusted.length +
+    "；触发方式：" + (manual ? "手动" : "网络变化")
+  );
+
   if (!trusted.length) {
     notify("配置未生效", "请至少填写一个 Wi-Fi 名称");
     $done();
     return;
   }
 
-  // Network Changed 触发后稍等网络状态稳定；手动执行无需等待。
-  setTimeout(applyScene, manual ? 0 : 1500);
+  // 直接执行，避免部分 NETWORK-CHANGED 运行环境提前释放延迟回调。
+  applyScene();
 
   function applyScene() {
     var config;

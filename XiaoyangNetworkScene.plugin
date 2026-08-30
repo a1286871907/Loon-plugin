@@ -1,5 +1,5 @@
 #!name = 小羊网络场景
-#!desc = 连接指定 Wi-Fi 时自动全局直连；离开后自动恢复规则模式。支持多个 Wi-Fi 名称。
+#!desc = 连接指定 Wi-Fi 时自动全局直连；离开后自动恢复规则模式。需将同包 JS 保存到 iCloud Drive/Loon/Script。
 #!author = 小羊
 #!system = iOS,iPadOS
 #!system_version = 15.0
