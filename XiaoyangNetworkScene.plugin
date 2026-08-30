@@ -1,0 +1,15 @@
+#!name = 小羊网络场景
+#!desc = 连接指定 Wi-Fi 时自动全局直连；离开后自动恢复规则模式。支持多个 Wi-Fi 名称。
+#!author = 小羊
+#!system = iOS,iPadOS
+#!system_version = 15.0
+#!loon_version = 3.5.1(986)
+#!tag = 网络,自动化,场景
+#!type = normal
+
+[Argument]
+trusted_ssids = input,"YXC",tag=全局直连 Wi-Fi,desc=多个名称用英文逗号、中文逗号、分号或换行分隔；名称需与系统显示完全一致
+
+[Script]
+network-changed then script("XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="小羊网络场景", timeout=15
+generic then script("XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15
