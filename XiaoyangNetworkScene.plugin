@@ -1,5 +1,5 @@
 #!name = 小羊网络场景
-#!desc = 指定 Wi-Fi 自动全局直连，离开后按设置恢复。过滤空 SSID 抖动与自身模式回调。
+#!desc = 指定 Wi-Fi 自动全局直连，离开后按设置恢复。兼容 Loon TestFlight 3.5.1(986)。
 #!author = 小羊
 #!system = iOS,iPadOS
 #!system_version = 15.0
@@ -9,10 +9,10 @@
 
 [Argument]
 trusted_ssids = input,"YXC",tag=全局直连 Wi-Fi,desc=多个名称用英文逗号、中文逗号、分号或换行分隔；名称需与系统显示完全一致
-leave_mode = select,"RULE","PREVIOUS","PROXY",tag=离开后的模式,desc=RULE=规则模式；PREVIOUS=进入 Wi-Fi 前的模式；PROXY=全局代理
+leave_mode = select,RULE,PREVIOUS,PROXY,tag=离开后的模式,desc=规则模式、进入前模式或全局代理
 notifications = switch,true,tag=显示切换通知,desc=关闭后自动切换保持安静；手动运行仍显示结果
-empty_grace_ms = select,800,300,1500,type=number,tag=空 SSID 稳定时间,desc=仅 SSID 为空时生效；明确检测到其他 Wi-Fi 不等待
+empty_grace_ms = input,"800",tag=空 SSID 稳定时间（毫秒）,desc=建议 300 到 1500；超出 200 到 3000 会自动使用 800
 
 [Script]
-network-changed then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=120", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="小羊网络场景", timeout=15
-generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=120", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15
+network-changed then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=122", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="小羊网络场景", timeout=15
+generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=122", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15

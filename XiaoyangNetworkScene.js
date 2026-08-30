@@ -7,16 +7,17 @@
   "use strict";
 
   var STORE_KEY = "xiaoyang.network.scene.state";
+  var EMPTY_SSID_GRACE_MS = 800;
+  var SELF_EVENT_WINDOW_MS = 3000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var trusted = parseSSIDList(args.trusted_ssids);
-  var leaveMode = normalizeLeaveMode(args.leave_mode);
-  var notificationsEnabled = booleanValue(args.notifications, true);
-  var emptySSIDGraceMS = boundedNumber(args.empty_grace_ms, 800, 200, 3000);
-  var selfEventWindowMS = 3000;
+  var leaveMode = parseLeaveMode(args.leave_mode);
+  var showNotifications = parseBoolean(args.notifications, true);
+  var emptySSIDGraceMS = parseDelay(args.empty_grace_ms);
   var manual = typeof $environment !== "undefined";
 
   console.log(
-    "[小羊网络场景] v1.2.0 已加载；可信 Wi-Fi 数量：" + trusted.length +
+    "[小羊网络场景] v1.2.2 已加载；可信 Wi-Fi 数量：" + trusted.length +
     "；触发方式：" + (manual ? "手动" : "网络变化")
   );
 
@@ -63,9 +64,9 @@
       return;
     }
 
-    var targetModel = isTrusted ? 0 : restoreModel(state);
+    var targetModel = isTrusted ? 0 : restoreModel(state.previousModel);
     var previousModel = isTrusted
-      ? (state.active ? state.previousModel : safePreviousModel(currentModel))
+      ? (state.active ? state.previousModel : (currentModel === 2 ? 2 : 1))
       : 1;
 
     console.log(
@@ -75,11 +76,7 @@
     );
 
     if (currentModel === targetModel) {
-      writeState({
-        active: isTrusted,
-        ssid: isTrusted ? ssid : "",
-        previousModel: previousModel
-      });
+      writeState({ active: isTrusted, ssid: isTrusted ? ssid : "", previousModel: previousModel });
       if (manual) {
         notify("当前模式正确", networkName + " · " + modeName(targetModel));
       }
@@ -95,7 +92,7 @@
         ssid: isTrusted ? ssid : "",
         previousModel: previousModel,
         ignoreModel: targetModel,
-        ignoreUntil: Date.now() + selfEventWindowMS
+        ignoreUntil: Date.now() + SELF_EVENT_WINDOW_MS
       });
       $config.setRunningModel(targetModel);
 
@@ -158,9 +155,7 @@
       return {
         active: value && value.active === true,
         ssid: value && value.ssid ? String(value.ssid) : "",
-        previousModel: value && (Number(value.previousModel) === 1 || Number(value.previousModel) === 2)
-          ? Number(value.previousModel)
-          : 1,
+        previousModel: value && Number(value.previousModel) === 2 ? 2 : 1,
         ignoreModel: value && typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
         ignoreUntil: value && value.ignoreUntil ? Number(value.ignoreUntil) : 0
       };
@@ -207,35 +202,30 @@
     return "未知模式";
   }
 
-  function restoreModel(state) {
+  function restoreModel(previousModel) {
     if (leaveMode === "PROXY") return 2;
-    if (leaveMode === "PREVIOUS") return safePreviousModel(state.previousModel);
+    if (leaveMode === "PREVIOUS") return Number(previousModel) === 2 ? 2 : 1;
     return 1;
   }
 
-  function safePreviousModel(model) {
-    return Number(model) === 2 ? 2 : 1;
-  }
-
-  function normalizeLeaveMode(value) {
+  function parseLeaveMode(value) {
     var mode = normalize(value).toUpperCase();
     return mode === "PROXY" || mode === "PREVIOUS" ? mode : "RULE";
   }
 
-  function booleanValue(value, fallback) {
-    if (value === true || value === "true" || value === 1 || value === "1") return true;
-    if (value === false || value === "false" || value === 0 || value === "0") return false;
+  function parseBoolean(value, fallback) {
+    if (value === true || value === "true") return true;
+    if (value === false || value === "false") return false;
     return fallback;
   }
 
-  function boundedNumber(value, fallback, minimum, maximum) {
-    var number = Number(value);
-    if (!isFinite(number)) return fallback;
-    return Math.max(minimum, Math.min(maximum, Math.round(number)));
+  function parseDelay(value) {
+    var delay = Number(value);
+    return isFinite(delay) && delay >= 200 && delay <= 3000 ? Math.round(delay) : EMPTY_SSID_GRACE_MS;
   }
 
   function announce(subtitle, content) {
-    if (notificationsEnabled || manual) notify(subtitle, content);
+    if (showNotifications || manual) notify(subtitle, content);
   }
 
   function notify(subtitle, content) {
