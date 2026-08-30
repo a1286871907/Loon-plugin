@@ -7,12 +7,14 @@
   "use strict";
 
   var STORE_KEY = "xiaoyang.network.scene.state";
+  var EMPTY_SSID_GRACE_MS = 800;
+  var SELF_EVENT_WINDOW_MS = 5000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var trusted = parseSSIDList(args.trusted_ssids);
   var manual = typeof $environment !== "undefined";
 
   console.log(
-    "[小羊网络场景] v1.0.1 已加载；可信 Wi-Fi 数量：" + trusted.length +
+    "[小羊网络场景] v1.1.0 已加载；可信 Wi-Fi 数量：" + trusted.length +
     "；触发方式：" + (manual ? "手动" : "网络变化")
   );
 
@@ -22,24 +24,32 @@
     return;
   }
 
-  // 直接执行，避免部分 NETWORK-CHANGED 运行环境提前释放延迟回调。
-  applyScene();
+  applyScene(false);
 
-  function applyScene() {
-    var config;
-    try {
-      config = JSON.parse($config.getConfig());
-    } catch (error) {
-      notify("读取网络失败", safeMessage(error));
-      $done();
-      return;
-    }
+  function applyScene(emptySSIDChecked) {
+    var config = readConfig();
+    if (!config) return;
 
     var ssid = normalize(config.ssid);
     var isTrusted = ssid !== "" && trusted.indexOf(ssid) !== -1;
     var currentModel = Number(config.running_model);
     var networkName = ssid || "蜂窝网络/未连接 Wi-Fi";
     var state = readState();
+
+    if (consumeSelfGeneratedEvent(state, currentModel, ssid, isTrusted)) {
+      $done();
+      return;
+    }
+
+    // 模式重载时 Loon 可能短暂返回空 SSID。只对空值做一次 800ms 稳定化读取；
+    // 明确的其他 Wi-Fi 仍立即恢复，不存在全局冷却或切换频率限制。
+    if (ssid === "" && state.active && !emptySSIDChecked) {
+      console.log("[小羊网络场景] SSID 暂时为空，800ms 后仅重读一次网络状态");
+      setTimeout(function () {
+        applyScene(true);
+      }, EMPTY_SSID_GRACE_MS);
+      return;
+    }
 
     // 不在可信 Wi-Fi，且此前并非本插件切到直连：完全不接管用户当前模式。
     if (!isTrusted && !state.active) {
@@ -60,7 +70,7 @@
     );
 
     if (currentModel === targetModel) {
-      writeState(isTrusted, isTrusted ? ssid : "");
+      writeState({ active: isTrusted, ssid: isTrusted ? ssid : "" });
       if (manual) {
         notify("当前模式正确", networkName + " · " + modeName(targetModel));
       }
@@ -69,8 +79,15 @@
     }
 
     try {
+      // 必须先写一次性标记，再切换模式；这样由 setRunningModel 自身产生的
+      // 下一次 NETWORK-CHANGED 回调不会反向触发另一次模式切换。
+      writeState({
+        active: isTrusted,
+        ssid: isTrusted ? ssid : "",
+        ignoreModel: targetModel,
+        ignoreUntil: Date.now() + SELF_EVENT_WINDOW_MS
+      });
       $config.setRunningModel(targetModel);
-      writeState(isTrusted, isTrusted ? ssid : "");
 
       if (isTrusted) {
         notify("已进入直连场景", ssid + " · 所有流量全局直连");
@@ -84,22 +101,64 @@
     $done();
   }
 
+  function readConfig() {
+    try {
+      return JSON.parse($config.getConfig());
+    } catch (error) {
+      notify("读取网络失败", safeMessage(error));
+      $done();
+      return null;
+    }
+  }
+
+  function consumeSelfGeneratedEvent(state, currentModel, ssid, isTrusted) {
+    var markerValid =
+      state.ignoreUntil > 0 &&
+      Date.now() <= state.ignoreUntil &&
+      currentModel === state.ignoreModel;
+
+    if (!markerValid) return false;
+
+    var sameTrustedScene = state.active && isTrusted && ssid === state.ssid;
+    var sameRestoredScene = !state.active && !isTrusted;
+    if (ssid !== "" && !sameTrustedScene && !sameRestoredScene) {
+      // 标记有效期间恰好发生了真实网络变化，不能吞掉。
+      writeState({ active: state.active, ssid: state.ssid });
+      return false;
+    }
+
+    writeState({ active: state.active, ssid: state.ssid });
+    console.log("[小羊网络场景] 已忽略自身模式切换产生的网络变化");
+    return true;
+  }
+
   function readState() {
     var raw = $persistentStore.read(STORE_KEY);
-    if (!raw) return { active: false, ssid: "" };
+    if (!raw) return emptyState();
     try {
       var value = JSON.parse(raw);
       return {
         active: value && value.active === true,
-        ssid: value && value.ssid ? String(value.ssid) : ""
+        ssid: value && value.ssid ? String(value.ssid) : "",
+        ignoreModel: value && typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
+        ignoreUntil: value && value.ignoreUntil ? Number(value.ignoreUntil) : 0
       };
     } catch (_) {
-      return { active: false, ssid: "" };
+      return emptyState();
     }
   }
 
-  function writeState(active, ssid) {
-    $persistentStore.write(JSON.stringify({ active: active, ssid: ssid }), STORE_KEY);
+  function emptyState() {
+    return { active: false, ssid: "", ignoreModel: -1, ignoreUntil: 0 };
+  }
+
+  function writeState(value) {
+    $persistentStore.write(JSON.stringify({
+      active: value.active === true,
+      ssid: value.ssid ? String(value.ssid) : "",
+      ignoreModel: typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
+      ignoreUntil: value.ignoreUntil ? Number(value.ignoreUntil) : 0
+    }), STORE_KEY);
   }
 
   function parseSSIDList(value) {
