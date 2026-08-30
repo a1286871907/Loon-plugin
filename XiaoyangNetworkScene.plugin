@@ -1,5 +1,5 @@
 #!name = 小羊网络场景
-#!desc = 连接指定 Wi-Fi 时自动全局直连；离开后自动恢复规则模式。需将同包 JS 保存到 iCloud Drive/Loon/Script。
+#!desc = 连接指定 Wi-Fi 时自动全局直连；离开后自动恢复规则模式。远程脚本版，不依赖 iCloud。
 #!author = 小羊
 #!system = iOS,iPadOS
 #!system_version = 15.0
@@ -11,5 +11,5 @@
 trusted_ssids = input,"YXC",tag=全局直连 Wi-Fi,desc=多个名称用英文逗号、中文逗号、分号或换行分隔；名称需与系统显示完全一致
 
 [Script]
-network-changed then script("XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="小羊网络场景", timeout=15
-generic then script("XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15
+network-changed then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="小羊网络场景", timeout=15
+generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js", {${trusted_ssids}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15
