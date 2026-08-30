@@ -1,0 +1,26 @@
+#!name=小羊配置优化
+#!desc=安全清理 Loon 规则与配置，并审计插件规则、Rewrite、Script、Tag、Host 与跨插件重复功能。节点订阅始终原样返回。
+#!author=小羊
+#!tag=解析器,规则,配置,优化
+#!system=iOS,iPadOS
+#!system_version=15.0
+#!loon_version=3.5.1(986)
+#!type=parser
+
+[Argument]
+normalize = switch,true,tag=基础格式优化,desc=统一换行、去 BOM、清理行尾空格与多余空行
+dedupe_exact = switch,true,tag=删除完全重复行,desc=只在同一配置段内删除完全相同的非注释行
+dedupe_rules = switch,true,tag=规则语义去重,desc=识别域名大小写或空格差异造成的同策略重复规则
+dedupe_lists = switch,true,tag=配置列表去重,desc=优化 DNS、bypass-tun、skip-proxy、real-ip、hostname 等列表
+remove_conflicts = switch,false,tag=删除后置冲突规则,desc=相同匹配条件使用不同策略时删除后出现的规则；默认只统计
+remove_shadowed = switch,false,tag=删除已覆盖域名规则,desc=仅删除已被前面同策略 DOMAIN-SUFFIX 覆盖的 DOMAIN 或更窄后缀
+comment_invalid = switch,false,tag=注释疑似无效规则,desc=不删除，只在明显缺少类型或匹配值时添加注释
+remove_comments = switch,false,tag=删除普通注释,desc=保留 #! 元数据；建议默认关闭
+write_report = switch,false,tag=写入优化统计,desc=在规则或配置顶部写入一行统计；日志始终会记录统计
+optimize_other = switch,false,tag=清理其他文本资源,desc=对 Rewrite、Script、Plugin 资源仅做格式与完全重复行清理；默认关闭
+audit_plugin = switch,true,tag=插件完整审计,desc=检查插件内规则策略、功能重复、Tag 重名、Host 冲突、MitM 与格式问题；只报告不修改
+cross_plugin_audit = switch,false,tag=跨插件重复检测,desc=仅比较曾经由本解析器处理过的插件；保存匿名功能指纹，不保存订阅地址和原始规则
+notify_plugin_issues = switch,false,tag=插件问题通知,desc=发现插件问题时发送一次摘要通知；详细内容始终写入脚本日志
+
+[Script]
+generic script-path=https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangConfigOptimizer.js,tag=小羊配置优化,timeout=15,argument=[{normalize},{dedupe_exact},{dedupe_rules},{dedupe_lists},{remove_conflicts},{remove_shadowed},{comment_invalid},{remove_comments},{write_report},{optimize_other},{audit_plugin},{cross_plugin_audit},{notify_plugin_issues}]
