@@ -7,14 +7,16 @@
   "use strict";
 
   var STORE_KEY = "xiaoyang.network.scene.state";
-  var EMPTY_SSID_GRACE_MS = 800;
-  var SELF_EVENT_WINDOW_MS = 5000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var trusted = parseSSIDList(args.trusted_ssids);
+  var leaveMode = normalizeLeaveMode(args.leave_mode);
+  var notificationsEnabled = booleanValue(args.notifications, true);
+  var emptySSIDGraceMS = boundedNumber(args.empty_grace_ms, 800, 200, 3000);
+  var selfEventWindowMS = 3000;
   var manual = typeof $environment !== "undefined";
 
   console.log(
-    "[小羊网络场景] v1.1.0 已加载；可信 Wi-Fi 数量：" + trusted.length +
+    "[小羊网络场景] v1.2.0 已加载；可信 Wi-Fi 数量：" + trusted.length +
     "；触发方式：" + (manual ? "手动" : "网络变化")
   );
 
@@ -44,10 +46,10 @@
     // 模式重载时 Loon 可能短暂返回空 SSID。只对空值做一次 800ms 稳定化读取；
     // 明确的其他 Wi-Fi 仍立即恢复，不存在全局冷却或切换频率限制。
     if (ssid === "" && state.active && !emptySSIDChecked) {
-      console.log("[小羊网络场景] SSID 暂时为空，800ms 后仅重读一次网络状态");
+      console.log("[小羊网络场景] SSID 暂时为空，" + emptySSIDGraceMS + "ms 后仅重读一次网络状态");
       setTimeout(function () {
         applyScene(true);
-      }, EMPTY_SSID_GRACE_MS);
+      }, emptySSIDGraceMS);
       return;
     }
 
@@ -61,7 +63,10 @@
       return;
     }
 
-    var targetModel = isTrusted ? 0 : 1;
+    var targetModel = isTrusted ? 0 : restoreModel(state);
+    var previousModel = isTrusted
+      ? (state.active ? state.previousModel : safePreviousModel(currentModel))
+      : 1;
 
     console.log(
       "[小羊网络场景] 当前：" + networkName +
@@ -70,7 +75,11 @@
     );
 
     if (currentModel === targetModel) {
-      writeState({ active: isTrusted, ssid: isTrusted ? ssid : "" });
+      writeState({
+        active: isTrusted,
+        ssid: isTrusted ? ssid : "",
+        previousModel: previousModel
+      });
       if (manual) {
         notify("当前模式正确", networkName + " · " + modeName(targetModel));
       }
@@ -84,15 +93,16 @@
       writeState({
         active: isTrusted,
         ssid: isTrusted ? ssid : "",
+        previousModel: previousModel,
         ignoreModel: targetModel,
-        ignoreUntil: Date.now() + SELF_EVENT_WINDOW_MS
+        ignoreUntil: Date.now() + selfEventWindowMS
       });
       $config.setRunningModel(targetModel);
 
       if (isTrusted) {
-        notify("已进入直连场景", ssid + " · 所有流量全局直连");
+        announce("已进入直连场景", ssid + " · 所有流量全局直连");
       } else {
-        notify("已恢复规则模式", networkName + " · 原有规则和策略组保持不变");
+        announce("已恢复" + modeName(targetModel), networkName + " · 原有规则和策略选择未修改");
       }
     } catch (error) {
       notify("切换模式失败", safeMessage(error));
@@ -123,11 +133,19 @@
     var sameRestoredScene = !state.active && !isTrusted;
     if (ssid !== "" && !sameTrustedScene && !sameRestoredScene) {
       // 标记有效期间恰好发生了真实网络变化，不能吞掉。
-      writeState({ active: state.active, ssid: state.ssid });
+      writeState({
+        active: state.active,
+        ssid: state.ssid,
+        previousModel: state.previousModel
+      });
       return false;
     }
 
-    writeState({ active: state.active, ssid: state.ssid });
+    writeState({
+      active: state.active,
+      ssid: state.ssid,
+      previousModel: state.previousModel
+    });
     console.log("[小羊网络场景] 已忽略自身模式切换产生的网络变化");
     return true;
   }
@@ -140,6 +158,9 @@
       return {
         active: value && value.active === true,
         ssid: value && value.ssid ? String(value.ssid) : "",
+        previousModel: value && (Number(value.previousModel) === 1 || Number(value.previousModel) === 2)
+          ? Number(value.previousModel)
+          : 1,
         ignoreModel: value && typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
         ignoreUntil: value && value.ignoreUntil ? Number(value.ignoreUntil) : 0
       };
@@ -149,13 +170,14 @@
   }
 
   function emptyState() {
-    return { active: false, ssid: "", ignoreModel: -1, ignoreUntil: 0 };
+    return { active: false, ssid: "", previousModel: 1, ignoreModel: -1, ignoreUntil: 0 };
   }
 
   function writeState(value) {
     $persistentStore.write(JSON.stringify({
       active: value.active === true,
       ssid: value.ssid ? String(value.ssid) : "",
+      previousModel: Number(value.previousModel) === 2 ? 2 : 1,
       ignoreModel: typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
       ignoreUntil: value.ignoreUntil ? Number(value.ignoreUntil) : 0
     }), STORE_KEY);
@@ -183,6 +205,37 @@
     if (Number(model) === 1) return "规则模式";
     if (Number(model) === 2) return "全局代理";
     return "未知模式";
+  }
+
+  function restoreModel(state) {
+    if (leaveMode === "PROXY") return 2;
+    if (leaveMode === "PREVIOUS") return safePreviousModel(state.previousModel);
+    return 1;
+  }
+
+  function safePreviousModel(model) {
+    return Number(model) === 2 ? 2 : 1;
+  }
+
+  function normalizeLeaveMode(value) {
+    var mode = normalize(value).toUpperCase();
+    return mode === "PROXY" || mode === "PREVIOUS" ? mode : "RULE";
+  }
+
+  function booleanValue(value, fallback) {
+    if (value === true || value === "true" || value === 1 || value === "1") return true;
+    if (value === false || value === "false" || value === 0 || value === "0") return false;
+    return fallback;
+  }
+
+  function boundedNumber(value, fallback, minimum, maximum) {
+    var number = Number(value);
+    if (!isFinite(number)) return fallback;
+    return Math.max(minimum, Math.min(maximum, Math.round(number)));
+  }
+
+  function announce(subtitle, content) {
+    if (notificationsEnabled || manual) notify(subtitle, content);
   }
 
   function notify(subtitle, content) {
