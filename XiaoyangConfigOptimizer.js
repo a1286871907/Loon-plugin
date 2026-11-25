@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.1.0";
+  var VERSION = "1.1.1";
   var original = text(typeof $resource === "undefined" ? "" : $resource);
   var type = Number(typeof $resourceType === "undefined" ? -1 : $resourceType);
   var args = typeof $argument === "object" && $argument ? $argument : {};
@@ -226,8 +226,7 @@
         auditDirective(trimmed, i + 1, "Rewrite", rewriteSeen, "rewriteDuplicate", fingerprints);
       } else if (section === "SCRIPT") {
         auditDirective(trimmed, i + 1, "Script", scriptSeen, "scriptDuplicate", fingerprints);
-        auditTag(trimmed, i + 1, tagSeen);
-        auditRemoteUrl(trimmed, i + 1);
+        auditScriptOptions(trimmed, i + 1, tagSeen);
       } else if (section === "HOST") {
         auditHost(trimmed, i + 1, hostSeen, fingerprints);
       } else if (section === "MITM") {
@@ -277,23 +276,28 @@
     fingerprints.push(label.toLowerCase() + "|" + key);
   }
 
-  function auditTag(line, lineNumber, seen) {
-    var match = /(?:^|,)\s*tag\s*=\s*(?:"([^"]+)"|'([^']+)'|([^,]+))/i.exec(line);
-    if (!match) return;
-    var tag = (match[1] || match[2] || match[3] || "").trim().toLowerCase();
-    if (!tag) return;
-    if (seen[tag]) {
-      stats.tagDuplicate++;
-      detail("第 " + lineNumber + " 行：Script tag 重名（" + tag + "）");
-    }
-    seen[tag] = true;
-  }
-
-  function auditRemoteUrl(line, lineNumber) {
-    var match = /script-path\s*=\s*(http:\/\/[^,\s]+)/i.exec(line);
-    if (match) {
+  function auditScriptOptions(line, lineNumber, seen) {
+    var modern = /\bthen\s+script\s*\(\s*"((?:\\.|[^"\\])*)"\s*(?:,\s*(?:"(?:\\.|[^"\\])*"|\x60[^\x60]*\x60|\{.*\})\s*)?\)\s*(?:with\s+(.+))?$/.exec(line);
+    var legacyPath = !modern && /(?:^|[,\s])script-path\s*=\s*["']?([^,\s"']+)/i.exec(line);
+    var path = modern ? modern[1] : (legacyPath ? legacyPath[1] : "");
+    if (/^http:\/\//i.test(path)) {
       stats.malformed++;
       detail("第 " + lineNumber + " 行：远程脚本使用 HTTP，建议改为 HTTPS");
+    }
+
+    var options = modern ? modern[2] || "" : line;
+    var fields = options.match(/(?:[^,"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')+/g) || [];
+    for (var i = 0; i < fields.length; i++) {
+      var match = /^\s*tag\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,]+))/i.exec(fields[i]);
+      if (!match) continue;
+      var tag = (match[1] || match[2] || match[3] || "").trim().toLowerCase();
+      if (!tag) return;
+      if (seen[tag]) {
+        stats.tagDuplicate++;
+        detail("第 " + lineNumber + " 行：Script tag 重名（" + tag + "）");
+      }
+      seen[tag] = true;
+      return;
     }
   }
 
@@ -509,7 +513,16 @@
     var value = (second === -1 ? rest : rest.slice(0, second)).trim();
     if (!typeName || !value) return { valid: false };
 
-    var action = second === -1 ? "" : rest.slice(second + 1).split(",").map(trim).join(",");
+    var fields = second === -1 ? [] : rest.slice(second + 1).split(",").map(trim);
+    var action = fields.join(",");
+    var noResolve = false;
+    if (/^(IP-CIDR|IP-CIDR6|GEOIP|IP-ASN)$/.test(typeName)) {
+      action = fields.filter(function (field) {
+        if (field.toLowerCase() !== "no-resolve") return true;
+        noResolve = true;
+        return false;
+      }).join(",");
+    }
     var domain = typeName === "DOMAIN" || typeName === "DOMAIN-SUFFIX" || typeName === "DOMAIN-KEYWORD";
     var normalizedValue = domain ? value.toLowerCase() : value;
     var normalizable = domain || /^(IP-CIDR|IP-CIDR6|GEOIP|IP-ASN|PROTOCOL|DEST-PORT|SRC-PORT|PORT|FINAL)$/.test(typeName);
@@ -518,9 +531,9 @@
       type: typeName,
       value: normalizedValue,
       action: action,
-      key: "$" + typeName + "\n" + normalizedValue,
+      key: "$" + typeName + "\n" + normalizedValue + (noResolve ? "\nno-resolve" : ""),
       normalizable: normalizable,
-      output: typeName + "," + value + (second === -1 ? "" : "," + action)
+      output: typeName + "," + value + (second === -1 ? "" : "," + fields.join(","))
     };
   }
 

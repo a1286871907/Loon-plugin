@@ -8,17 +8,17 @@
 
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var prefix = detectTaskPrefix(args);
-  var isManual = typeof $environment !== "undefined";
+  var isManual = typeof $script !== "undefined" && /^测试签到任务 [123]$/.test($script.name);
   var today = localDateKey(new Date());
   var task = { name: "签到任务", url: "" };
   var stateKey;
 
   try {
     task = readTask(args, prefix);
-    validate(task, args);
+    validate(task);
     stateKey = "xiaoyang.checkin.lastSuccess." + stableHash(task.name + "|" + task.url);
   } catch (error) {
-    finish(false, task.name, "配置错误：" + safeMessage(error), true);
+    finish(false, task.name, "配置错误：" + safeMessage(error), isManual);
     return;
   }
 
@@ -43,7 +43,7 @@
   console.log("[小羊签到] 开始：" + task.name + "，方式：" + task.method);
   $httpClient[task.method.toLowerCase()](request, function (error, response, data) {
     if (error) {
-      finish(false, task.name, "网络错误：" + safeMessage(error), true);
+      finish(false, task.name, "网络错误：" + safeMessage(error), isManual);
       return;
     }
 
@@ -91,7 +91,6 @@
       success: stringValue(source[p + "_success"], ""),
       already: stringValue(source[p + "_already"], ""),
       failure: stringValue(source[p + "_failure"], ""),
-      notifyMode: stringValue(source.notify_mode, "仅失败"),
       allowHttp: Boolean(source.allow_http),
       timeoutMs: clamp(Number(source.timeout_seconds) || 15, 3, 50) * 1000
     };

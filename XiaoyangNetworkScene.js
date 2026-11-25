@@ -1,6 +1,6 @@
 /*
  * 小羊网络场景 for Loon 3.5.1 (986)
- * 可信 Wi-Fi => 全局直连；其他 Wi-Fi/蜂窝 => 规则模式。
+ * 可信 Wi-Fi => 全局直连；离开已接管的场景后按设置恢复。
  */
 
 (function () {
@@ -8,174 +8,117 @@
 
   var STORE_KEY = "xiaoyang.network.scene.state";
   var EMPTY_SSID_GRACE_MS = 800;
-  var SELF_EVENT_WINDOW_MS = 3000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var trusted = parseSSIDList(args.trusted_ssids);
   var leaveMode = parseLeaveMode(args.leave_mode);
   var showNotifications = parseBoolean(args.notifications, true);
   var emptySSIDGraceMS = parseDelay(args.empty_grace_ms);
-  var manual = typeof $environment !== "undefined";
+  var manual = typeof $script !== "undefined" && $script.name === "立即应用当前网络场景";
 
   console.log(
-    "[小羊网络场景] v1.2.2 已加载；可信 Wi-Fi 数量：" + trusted.length +
+    "[小羊网络场景] v1.2.3 已加载；可信 Wi-Fi 数量：" + trusted.length +
     "；触发方式：" + (manual ? "手动" : "网络变化")
   );
-
-  if (!trusted.length) {
-    notify("配置未生效", "请至少填写一个 Wi-Fi 名称");
-    $done();
-    return;
-  }
 
   applyScene(false);
 
   function applyScene(emptySSIDChecked) {
-    var config = readConfig();
-    if (!config) return;
-
-    var ssid = normalize(config.ssid);
-    var isTrusted = ssid !== "" && trusted.indexOf(ssid) !== -1;
-    var currentModel = Number(config.running_model);
-    var networkName = ssid || "蜂窝网络/未连接 Wi-Fi";
-    var state = readState();
-
-    if (consumeSelfGeneratedEvent(state, currentModel, ssid, isTrusted)) {
-      $done();
-      return;
-    }
-
-    // 模式重载时 Loon 可能短暂返回空 SSID。只对空值做一次 800ms 稳定化读取；
-    // 明确的其他 Wi-Fi 仍立即恢复，不存在全局冷却或切换频率限制。
-    if (ssid === "" && state.active && !emptySSIDChecked) {
-      console.log("[小羊网络场景] SSID 暂时为空，" + emptySSIDGraceMS + "ms 后仅重读一次网络状态");
-      setTimeout(function () {
-        applyScene(true);
-      }, emptySSIDGraceMS);
-      return;
-    }
-
-    // 不在可信 Wi-Fi，且此前并非本插件切到直连：完全不接管用户当前模式。
-    if (!isTrusted && !state.active) {
-      console.log("[小羊网络场景] 当前不属于可信 Wi-Fi，插件未接管，保持现有模式");
-      if (manual) {
-        notify("无需切换", networkName + " · 保持" + modeName(currentModel));
-      }
-      $done();
-      return;
-    }
-
-    var targetModel = isTrusted ? 0 : restoreModel(state.previousModel);
-    var previousModel = isTrusted
-      ? (state.active ? state.previousModel : (currentModel === 2 ? 2 : 1))
-      : 1;
-
-    console.log(
-      "[小羊网络场景] 当前：" + networkName +
-      "；目标：" + modeName(targetModel) +
-      "；当前模式：" + modeName(currentModel)
-    );
-
-    if (currentModel === targetModel) {
-      writeState({ active: isTrusted, ssid: isTrusted ? ssid : "", previousModel: previousModel });
-      if (manual) {
-        notify("当前模式正确", networkName + " · " + modeName(targetModel));
-      }
-      $done();
-      return;
-    }
-
     try {
-      // 必须先写一次性标记，再切换模式；这样由 setRunningModel 自身产生的
-      // 下一次 NETWORK-CHANGED 回调不会反向触发另一次模式切换。
-      writeState({
-        active: isTrusted,
-        ssid: isTrusted ? ssid : "",
-        previousModel: previousModel,
-        ignoreModel: targetModel,
-        ignoreUntil: Date.now() + SELF_EVENT_WINDOW_MS
-      });
-      $config.setRunningModel(targetModel);
+      var config = JSON.parse($config.getConfig());
+      var rawModel = normalize(config && config.running_model);
+      if (!/^[012]$/.test(rawModel)) {
+        throw new Error("无法读取当前运行模式");
+      }
+
+      var currentModel = Number(rawModel);
+      var ssid = normalize(config.ssid);
+      var isTrusted = ssid !== "" && trusted.indexOf(ssid) !== -1;
+      var networkName = ssid || "蜂窝网络/未连接 Wi-Fi";
+      var state = readState();
+
+      // 模式重载和真实离开 Wi-Fi 都可能返回空 SSID，延迟一次后重新读取状态。
+      if (ssid === "" && trusted.length && state.active && !emptySSIDChecked) {
+        console.log("[小羊网络场景] SSID 暂时为空，" + emptySSIDGraceMS + "ms 后重读网络状态");
+        setTimeout(function () {
+          applyScene(true);
+        }, emptySSIDGraceMS);
+        return;
+      }
 
       if (isTrusted) {
-        announce("已进入直连场景", ssid + " · 所有流量全局直连");
-      } else {
-        announce("已恢复" + modeName(targetModel), networkName + " · 原有规则和策略选择未修改");
+        enterScene(state, currentModel, ssid);
+      } else if (state.active) {
+        leaveScene(state, currentModel, networkName);
+      } else if (manual) {
+        if (trusted.length) notify("无需切换", networkName + " · 保持" + modeName(currentModel));
+        else notify("配置未生效", "请至少填写一个 Wi-Fi 名称");
       }
     } catch (error) {
-      notify("切换模式失败", safeMessage(error));
+      var message = safeMessage(error);
+      console.log("[小羊网络场景] 应用场景失败：" + message);
+      announce("应用场景失败", message);
     }
 
     $done();
   }
 
-  function readConfig() {
-    try {
-      return JSON.parse($config.getConfig());
-    } catch (error) {
-      notify("读取网络失败", safeMessage(error));
-      $done();
-      return null;
+  function enterScene(state, currentModel, ssid) {
+    if (currentModel === 0) {
+      if (manual) notify("当前模式正确", ssid + " · 全局直连");
+      return;
     }
+
+    if (state.active) {
+      setModel(0);
+    } else {
+      // 切到直连前先保存原模式，网络回调和下次启动才能执行恢复。
+      writeState({ active: true, previousModel: currentModel });
+      try {
+        setModel(0);
+      } catch (error) {
+        try {
+          writeState(state);
+        } catch (rollbackError) {
+          throw new Error(safeMessage(error) + "，且" + safeMessage(rollbackError));
+        }
+        throw error;
+      }
+    }
+    announce("已进入直连场景", ssid + " · 全局直连");
   }
 
-  function consumeSelfGeneratedEvent(state, currentModel, ssid, isTrusted) {
-    var markerValid =
-      state.ignoreUntil > 0 &&
-      Date.now() <= state.ignoreUntil &&
-      currentModel === state.ignoreModel;
+  function leaveScene(state, currentModel, networkName) {
+    var targetModel = restoreModel(state.previousModel);
+    if (currentModel !== targetModel) setModel(targetModel);
+    writeState({ active: false });
+    announce("已恢复" + modeName(targetModel), networkName + " · " + modeName(targetModel));
+  }
 
-    if (!markerValid) return false;
-
-    var sameTrustedScene = state.active && isTrusted && ssid === state.ssid;
-    var sameRestoredScene = !state.active && !isTrusted;
-    if (ssid !== "" && !sameTrustedScene && !sameRestoredScene) {
-      // 标记有效期间恰好发生了真实网络变化，不能吞掉。
-      writeState({
-        active: state.active,
-        ssid: state.ssid,
-        previousModel: state.previousModel
-      });
-      return false;
+  function setModel(model) {
+    if ($config.setRunningModel(model) !== true) {
+      throw new Error("无法切换到" + modeName(model));
     }
-
-    writeState({
-      active: state.active,
-      ssid: state.ssid,
-      previousModel: state.previousModel
-    });
-    console.log("[小羊网络场景] 已忽略自身模式切换产生的网络变化");
-    return true;
   }
 
   function readState() {
     var raw = $persistentStore.read(STORE_KEY);
-    if (!raw) return emptyState();
-    try {
-      var value = JSON.parse(raw);
-      return {
-        active: value && value.active === true,
-        ssid: value && value.ssid ? String(value.ssid) : "",
-        previousModel: value && Number(value.previousModel) === 2 ? 2 : 1,
-        ignoreModel: value && typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
-        ignoreUntil: value && value.ignoreUntil ? Number(value.ignoreUntil) : 0
-      };
-    } catch (_) {
-      return emptyState();
+    if (raw) {
+      try {
+        var value = JSON.parse(raw);
+        if (value && value.active === true) {
+          return { active: true, previousModel: Number(value.previousModel) === 2 ? 2 : 1 };
+        }
+      } catch (_) {
+        // 损坏的记录按未接管处理。
+      }
     }
-  }
-
-  function emptyState() {
-    return { active: false, ssid: "", previousModel: 1, ignoreModel: -1, ignoreUntil: 0 };
+    return { active: false };
   }
 
   function writeState(value) {
-    $persistentStore.write(JSON.stringify({
-      active: value.active === true,
-      ssid: value.ssid ? String(value.ssid) : "",
-      previousModel: Number(value.previousModel) === 2 ? 2 : 1,
-      ignoreModel: typeof value.ignoreModel !== "undefined" ? Number(value.ignoreModel) : -1,
-      ignoreUntil: value.ignoreUntil ? Number(value.ignoreUntil) : 0
-    }), STORE_KEY);
+    if ($persistentStore.write(JSON.stringify(value), STORE_KEY) !== true) {
+      throw new Error("无法保存场景状态");
+    }
   }
 
   function parseSSIDList(value) {
