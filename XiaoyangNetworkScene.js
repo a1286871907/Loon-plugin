@@ -1,54 +1,82 @@
-/* 小羊网络场景 v2.0.1 for Loon 3.5.1 (986) */
+/* 小羊网络场景 v2.1.0 for Loon 3.5.1 (986) */
 (function () {
   "use strict";
 
   var STORE_KEY = "xiaoyang.network.scene.state";
   var ERROR_KEY = "xiaoyang.network.scene.last_error";
+  var BINDINGS_KEY = "xiaoyang.network.scene.policy_bindings";
   var MODES = { DIRECT: 0, RULE: 1, PROXY: 2 };
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var tag = typeof $script === "object" && $script ? $script.name : "";
   var manualApply = tag === "立即应用当前网络场景";
   var pause = tag === "暂停当前 Wi-Fi 自动切换";
   var status = tag === "查看当前网络场景";
-  var manual = manualApply || pause || status;
+  var bind = tag === "把所选策略组绑定到当前 Wi-Fi";
+  var unbind = tag === "取消当前 Wi-Fi 的策略组绑定";
+  var manual = manualApply || pause || status || bind || unbind;
+  var pauseAll = args.pause_auto === true || args.pause_auto === "true";
   var notifications = args.notifications !== false && args.notifications !== "false";
   var delay = Number(args.empty_grace_ms);
   var grace = isFinite(delay) && delay >= 200 && delay <= 3000 ? Math.round(delay) : 800;
   var leaveMode = trim(args.leave_mode).toUpperCase();
-  var policyGroup = trim(args.policy_group);
-  var policyTarget = trim(args.policy_target);
+  var policyGroup, policyTarget;
   var scenes = parseScenes();
   var state;
   var resumeSSID;
+  var unbound = false;
 
   run(false);
 
   function run(rechecked) {
     var waiting = false;
     try {
+      if (pauseAll && !status && !bind && !unbind) {
+        if (manual) announce("自动切换已暂停", "在插件设置关闭「暂停自动切换」即可恢复");
+        return;
+      }
       var network = readNetwork();
       var ssid = network.ssid;
       state = readState();
-      var scene = ssid && !scenes.error ? scenes.entries[ssid] || "" : "";
+      var bindings = readBindings();
+      if (!ssid && !status && !rechecked && (state.mode || state.policy || state.pausedSSID || manual ||
+          Object.keys(bindings).length || (!scenes.error && Object.keys(scenes.entries).length))) {
+        waiting = scheduleRecheck();
+        return;
+      }
+      if ((pause || bind || (unbind && !unbound)) && !ssid) throw new Error("未读取到 Wi-Fi 名称");
+
+      if (bind) {
+        bindPolicy(ssid, bindings);
+        return;
+      }
+      if (unbind && !unbound) {
+        if (!bindings[ssid]) {
+          announce("当前 Wi-Fi 没有策略组绑定", ssid);
+          return;
+        }
+        delete bindings[ssid];
+        writeBindings(bindings);
+        unbound = true;
+        announce("已取消策略组绑定", ssid);
+      }
+      var binding = ssid && bindings[ssid];
+      policyGroup = binding ? binding.group : trim(args.policy_group);
+      policyTarget = binding ? binding.target : trim(args.policy_target);
+      var scene = binding ? "POLICY" : (ssid && !scenes.error ? scenes.entries[ssid] || "" : "");
 
       if (status) {
         showStatus(ssid, network.mode, scene);
+        return;
+      }
+      if (pauseAll) return;
+      if (state.mode && typeof state.mode.pending !== "undefined" && state.mode.pending !== network.mode) {
+        settleMode(state.mode, network.mode);
+      }
+      if (pause) {
+        pauseScene(network);
       } else {
-        if (!ssid && !rechecked && (state.mode || state.policy || state.pausedSSID || manual ||
-            (!scenes.error && Object.keys(scenes.entries).length))) {
-          waiting = scheduleRecheck();
-          return;
-        }
-        if (state.mode && typeof state.mode.pending !== "undefined" && state.mode.pending !== network.mode) {
-          settleMode(state.mode, network.mode);
-        }
-        if (pause) {
-          if (!ssid) throw new Error("未读取到 Wi-Fi 名称");
-          pauseScene(network);
-        } else {
-          if (manualApply && typeof resumeSSID === "undefined") resumeSSID = ssid;
-          if (applyScene(network, scene) && !rechecked) waiting = scheduleRecheck();
-        }
+        if (manualApply && typeof resumeSSID === "undefined") resumeSSID = ssid;
+        if (applyScene(network, scene, binding) && !rechecked) waiting = scheduleRecheck();
       }
     } catch (error) {
       reportError(error);
@@ -69,14 +97,14 @@
     return { ssid: trim(config.ssid), mode: Number(rawMode) };
   }
 
-  function applyScene(network, scene) {
+  function applyScene(network, scene, binding) {
     var ssid = network.ssid;
     if (state.pausedSSID) {
       if (ssid === state.pausedSSID && resumeSSID !== ssid) return;
       saveState({ pausedSSID: "" });
     }
 
-    var issue = scenes.error;
+    var issue = binding ? "" : scenes.error;
     if (scene === "POLICY" && (!policyGroup || !policyTarget)) {
       issue = "POLICY 场景需要填写策略组名称和目标策略";
       scene = "";
@@ -257,6 +285,43 @@
     }
   }
 
+  function readBindings() {
+    var result = Object.create(null);
+    var raw = $persistentStore.read(BINDINGS_KEY);
+    if (!raw) return result;
+    var saved;
+    try {
+      saved = JSON.parse(raw);
+    } catch (_) {
+      console.log("[小羊网络场景] 已忽略损坏的策略组绑定记录");
+    }
+    Object.keys(saved || {}).forEach(function (ssid) {
+      var entry = saved[ssid];
+      if (entry && typeof entry.group === "string" && entry.group && typeof entry.target === "string" && entry.target) {
+        result[ssid] = entry;
+      }
+    });
+    return result;
+  }
+
+  function writeBindings(bindings) {
+    if ($persistentStore.write(JSON.stringify(bindings), BINDINGS_KEY) !== true) {
+      throw new Error("无法保存 Wi-Fi 的策略组绑定");
+    }
+  }
+
+  function bindPolicy(ssid, bindings) {
+    var environment = typeof $environment === "object" && $environment;
+    var group = environment && environment.params && environment.params.policyGroup;
+    if (typeof group !== "string" || !group) {
+      throw new Error("请从 Loon 的策略组入口运行此操作，插件会读取该组已选中的策略");
+    }
+    var target = selectedPolicy(group);
+    bindings[ssid] = { group: group, target: target };
+    writeBindings(bindings);
+    announce("已绑定到当前 Wi-Fi", ssid + " · " + group + " → " + target);
+  }
+
   function readState() {
     var raw = $persistentStore.read(STORE_KEY);
     var saved;
@@ -301,11 +366,9 @@
   }
 
   function parseScenes() {
-    var fallback = trim(args.trusted_ssids).split(/[,，;；\r\n]+/);
     var entries = Object.create(null);
-    fallback.forEach(function (entry) {
-      var ssid = trim(entry);
-      if (ssid) entries[ssid] = "DIRECT";
+    ssidList(args.trusted_ssids).forEach(function (ssid) {
+      entries[ssid] = "DIRECT";
     });
 
     var explicit = trim(args.wifi_scenes).split(/[;；\r\n]+/);
@@ -323,7 +386,17 @@
       seen[name] = true;
       entries[name] = scene;
     }
+    var ruleSSIDs = ssidList(args.rule_ssids);
+    var proxySSIDs = ssidList(args.proxy_ssids);
+    var duplicate = ruleSSIDs.find(function (ssid) { return proxySSIDs.indexOf(ssid) !== -1; });
+    if (duplicate) return { entries: entries, error: "「" + duplicate + "」同时填在规则模式和全局代理列表" };
+    ruleSSIDs.forEach(function (ssid) { entries[ssid] = "RULE"; });
+    proxySSIDs.forEach(function (ssid) { entries[ssid] = "PROXY"; });
     return { entries: entries, error: "" };
+  }
+
+  function ssidList(value) {
+    return trim(value).split(/[,，;；\r\n]+/).map(trim).filter(Boolean);
   }
 
   function showStatus(ssid, currentMode, scene) {
@@ -332,7 +405,8 @@
     var details = [
       "当前模式：" + modeName(currentMode),
       "匹配场景：" + (scene === "POLICY" ? "策略组" : (scene ? modeName(MODES[scene]) : "无")),
-      "自动切换：" + (paused ? "当前 Wi-Fi 已暂停" : (state.pausedSSID && !ssid ? "等待确认是否已离开暂停的 Wi-Fi" : "启用")),
+      "自动切换：" + (pauseAll ? "设置开关已暂停" :
+        (paused ? "当前 Wi-Fi 已暂停" : (state.pausedSSID && !ssid ? "等待确认是否已离开暂停的 Wi-Fi" : "启用"))),
       "插件接管：" + ([state.mode ? (pending ? "运行模式待确认" : "运行模式") : "",
         state.policy ? "策略组" : ""].filter(Boolean).join("、") || "无")
     ];
