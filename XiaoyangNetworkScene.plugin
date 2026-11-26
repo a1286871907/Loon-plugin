@@ -1,5 +1,5 @@
 #!name = 小羊网络场景
-#!desc = 指定 Wi-Fi 自动全局直连。由插件切入直连的场景，离开后按设置恢复。兼容 Loon TestFlight 3.5.1(986)。
+#!desc = v2.0.1 · 按 Wi-Fi 切换模式或策略组，支持临时暂停和查看当前场景。
 #!author = 小羊
 #!system = iOS,iPadOS
 #!system_version = 15.0
@@ -13,6 +13,12 @@ leave_mode = select,RULE,PREVIOUS,PROXY,tag=离开后的模式,desc=规则模式
 notifications = switch,true,tag=显示切换通知,desc=关闭后自动切换保持安静；手动运行仍显示结果
 empty_grace_ms = input,"800",tag=空 SSID 稳定时间（毫秒）,desc=建议 300 到 1500；超出 200 到 3000 会自动使用 800
 
+wifi_scenes = input,"",tag=按 Wi-Fi 设置场景,desc="例如 Home=DIRECT；Office=RULE；Travel=PROXY；Studio=POLICY。用分号或换行分隔；同名设置优先于全局直连 Wi-Fi。"
+policy_group = input,"",tag=策略组名称,desc="仅 POLICY 场景使用。填写现有手动选择策略组的完整名称。"
+policy_target = input,"",tag=目标策略,desc="仅 POLICY 场景使用。填写该组内可选项的完整名称；在规则模式下生效。"
+
 [Script]
-network-changed then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=123", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="小羊网络场景", timeout=15
-generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=123", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}}) with tag="立即应用当前网络场景", img_url="wifi.system", timeout=15
+network-changed then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=201", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}, ${wifi_scenes}, ${policy_group}, ${policy_target}}) with tag="小羊网络场景", timeout=15
+generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=201", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}, ${wifi_scenes}, ${policy_group}, ${policy_target}}) with tag="立即应用当前网络场景", timeout=15, img_url="wifi.system"
+generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=201", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}, ${wifi_scenes}, ${policy_group}, ${policy_target}}) with tag="暂停当前 Wi-Fi 自动切换", timeout=15, img_url="pause.circle.system"
+generic then script("https://raw.githubusercontent.com/a1286871907/Loon-plugin/refs/heads/main/XiaoyangNetworkScene.js?v=201", {${trusted_ssids}, ${leave_mode}, ${notifications}, ${empty_grace_ms}, ${wifi_scenes}, ${policy_group}, ${policy_target}}) with tag="查看当前网络场景", timeout=15, img_url="info.circle.system"
